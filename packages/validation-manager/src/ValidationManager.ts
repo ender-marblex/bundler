@@ -37,7 +37,7 @@ import {
   PaymasterValidationInfo
 } from '@account-abstraction/utils'
 
-import { debug_traceCall } from './GethTracer'
+import { debug_traceCall, gethHex } from './GethTracer'
 
 import { IValidationManager, ValidateUserOpResult, ValidationResult } from './IValidationManager'
 import { ERC7562Parser } from './ERC7562Parser'
@@ -211,11 +211,12 @@ export class ValidationManager implements IValidationManager {
     // That is, if we end up with FailedOp(1) with "AA94", it means the UserOp-under-test passed successfully.
     const data = this.entryPoint.interface.encodeFunctionData('handleOps', [[packUserOp(userOp)], AddressZero])
     const prevg = this.preVerificationGasCalculator._calculate(userOp, {})
+    const gasValue = sum(prevg, userOp.verificationGasLimit, userOp.paymasterVerificationGasLimit)
     const tx = {
       to: this.entryPoint.address,
       data,
       authorizationList: userOp.eip7702Auth == null ? null : [userOp.eip7702Auth],
-      gas: sum(prevg, userOp.verificationGasLimit, userOp.paymasterVerificationGasLimit).toNumber()
+      gas: gethHex(gasValue)
     }
 
     try {

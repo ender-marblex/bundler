@@ -82,7 +82,10 @@ export async function debug_traceCall (provider: JsonRpcProvider, tx: Deferrable
 }
 
 export function gethHex (n: BigNumberish): string {
-  return BigNumber.from(n).toHexString().replace(/0x0(.)/, '0x$1')
+  const hex = BigNumber.from(n).toHexString()
+  // Remove all leading zeros, but keep at least one digit (0x0 for zero)
+  if (hex === '0x0' || hex === '0x') return '0x0'
+  return hex.replace(/^0x0+/, '0x')
 }
 
 // eslint-disable-next-line @typescript-eslint/naming-convention

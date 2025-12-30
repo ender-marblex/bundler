@@ -170,18 +170,12 @@ async function main (): Promise<void> {
 
   const bal = await getBalance(addr)
   console.log('account address', addr, 'deployed=', await isDeployed(addr), 'bal=', formatEther(bal))
-  const gasPrice = await provider.getGasPrice()
-  // TODO: actual required val
-  const requiredBalance = gasPrice.mul(4e6)
-  if (bal.lt(requiredBalance.div(2))) {
-    console.log('funding account to', requiredBalance.toString())
-    await signer.sendTransaction({
-      to: addr,
-      value: requiredBalance.sub(bal)
-    }).then(async tx => await tx.wait())
-  } else {
-    console.log('not funding account. balance is enough')
-  }
+
+  // 넉넉하게 전송
+  await signer.sendTransaction({
+    to: addr,
+    value: parseEther('1')
+  }).then(async tx => await tx.wait())
 
   const dest = addr
   const data = keccak256(Buffer.from('entryPoint()')).slice(0, 10)
