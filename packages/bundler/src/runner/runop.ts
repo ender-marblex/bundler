@@ -199,11 +199,13 @@ async function main (): Promise<void> {
   console.log('account address', addr, 'deployed=', await isDeployed(addr), 'bal=', formatEther(bal))
 
   // 넉넉하게 전송
-  // await signer.sendTransaction({
-  //   to: addr,
-  //   value: parseEther('1')
-  // }).then(async tx => await tx.wait())
-
+  if(opts.paymaster == null) {
+    await signer.sendTransaction({
+      to: addr,
+      value: parseEther('1')
+    }).then(async tx => await tx.wait())
+  }
+  
   const dest = addr
   const data = keccak256(Buffer.from('entryPoint()')).slice(0, 10)
   console.log('data=', data)
