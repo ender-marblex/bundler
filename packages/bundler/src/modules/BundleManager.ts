@@ -80,26 +80,62 @@ export class BundleManager implements IBundleManager {
    */
   async sendNextBundle (): Promise<SendBundleReturn | undefined> {
     return await this.mutex.runExclusive(async () => {
+      console.log('  🔒 [6/6] BundleManager.sendNextBundle 시작 (Mutex 잠금)')
       debug('sendNextBundle')
 
       // first flush mempool from already-included UserOps, by actively scanning past events.
+      console.log('  🧹 과거 이벤트 처리 중 (이미 포함된 UserOps 제거)...')
       await this.handlePastEvents()
+      console.log('  ✅ 과거 이벤트 처리 완료')
 
       // TODO: pass correct bundle limit parameters!
+      console.log('  📦 번들 생성 시작...')
+      const bundleStartTime = Date.now()
       const [bundle, eip7702Tuples, storageMap] = await this.createBundle(0, 0, 0)
+      const bundleCreateTime = Date.now() - bundleStartTime
+      console.log(`  ✅ 번들 생성 완료 (소요 시간: ${bundleCreateTime}ms, UserOps 개수: ${bundle.length})`)
+      
       if (bundle.length === 0) {
+        console.log('  ⚠️  전송할 번들이 없음')
         debug('sendNextBundle - no bundle to send')
       } else {
+        console.log('  💰 Beneficiary 선택 중...')
         const beneficiary = await this._selectBeneficiary()
+        console.log('  ✅ Beneficiary:', beneficiary)
+        
+        console.log('  🚀 번들 전송 시작...')
+        const sendStartTime = Date.now()
         const ret = await this.sendBundle(bundle as UserOperation[], eip7702Tuples, beneficiary, storageMap)
+        const sendTime = Date.now() - sendStartTime
+        
+        if (ret != null) {
+          console.log(`  ✅ 번들 전송 완료 (소요 시간: ${sendTime}ms)`)
+          console.log('  📊 번들 전송 결과:', {
+            transactionHash: ret.transactionHash,
+            userOpHashesCount: ret.userOpHashes.length
+          })
+        } else {
+          console.log(`  ❌ 번들 전송 실패 (소요 시간: ${sendTime}ms)`)
+        }
         debug(`sendNextBundle exit - after sent a bundle of ${bundle.length} `)
+        console.log('  🔓 BundleManager.sendNextBundle 완료 (Mutex 해제)\n')
         return ret
       }
+      console.log('  🔓 BundleManager.sendNextBundle 완료 (Mutex 해제)\n')
     })
   }
 
   async handlePastEvents (): Promise<void> {
+    const mempoolCountBefore = this.mempoolManager.count()
+    console.log(`    📊 handlePastEvents 시작 (현재 mempool 크기: ${mempoolCountBefore})`)
     await this.eventsManager.handlePastEvents()
+    const mempoolCountAfter = this.mempoolManager.count()
+    const removedCount = mempoolCountBefore - mempoolCountAfter
+    if (removedCount > 0) {
+      console.log(`    ✅ handlePastEvents 완료 (제거된 UserOps: ${removedCount}, 현재 mempool 크기: ${mempoolCountAfter})`)
+    } else {
+      console.log(`    ✅ handlePastEvents 완료 (제거된 UserOps 없음, 현재 mempool 크기: ${mempoolCountAfter})`)
+    }
   }
 
   // parse revert from FailedOp(index,str) or FailedOpWithRevert(uint256 opIndex, string reason, bytes inner);
@@ -145,33 +181,66 @@ export class BundleManager implements IBundleManager {
    */
   async sendBundle (userOps: UserOperation[], eip7702Tuples: EIP7702Authorization[], beneficiary: string, storageMap: StorageMap): Promise<SendBundleReturn | undefined> {
     try {
+      console.log('    📊 번들 정보:', {
+        userOpsCount: userOps.length,
+        eip7702TuplesCount: eip7702Tuples.length,
+        beneficiary,
+        storageMapSize: Object.keys(storageMap).length
+      })
+      
+      console.log('    💸 가스 수수료 정보 조회 중...')
       const feeData = await this.provider.getFeeData()
+      console.log('    ✅ 가스 수수료 정보:', {
+        maxPriorityFeePerGas: feeData.maxPriorityFeePerGas?.toString(),
+        maxFeePerGas: feeData.maxFeePerGas?.toString()
+      })
+      
       // TODO: estimate is not enough. should trace with validation rules, to prevent on-chain revert.
       const type = eip7702Tuples.length > 0 ? TX_TYPE_EIP_7702 : TX_TYPE_EIP_1559
+      console.log('    📝 트랜잭션 타입:', type === TX_TYPE_EIP_7702 ? 'EIP-7702' : 'EIP-1559')
+      
+      console.log('    🔨 트랜잭션 구성 중...')
+      const nonce = await this.signer.getTransactionCount()
+      console.log('    📊 Signer Nonce:', nonce)
+      
       const tx = await this.entryPoint.populateTransaction.handleOps(userOps.map(packUserOp), beneficiary, {
         type,
-        nonce: await this.signer.getTransactionCount(),
+        nonce,
         maxPriorityFeePerGas: feeData.maxPriorityFeePerGas ?? 0,
         maxFeePerGas: feeData.maxFeePerGas ?? 0
       })
       tx.chainId = this.provider._network.chainId
+      console.log('    ✅ 트랜잭션 구성 완료')
+      
       let ret: string
       if (this.conditionalRpc) {
+        console.log('    🔐 Conditional RPC 모드: 트랜잭션 서명 중...')
         const signedTx = await this.signer.signTransaction(tx)
         debug('eth_sendRawTransactionConditional', storageMap)
         ret = await this.provider.send('eth_sendRawTransactionConditional', [
           signedTx, { knownAccounts: storageMap }
         ])
+        console.log('    ✅ Conditional RPC 전송 완료:', ret)
         debug('eth_sendRawTransactionConditional ret=', ret)
       } else if (tx.type === TX_TYPE_EIP_7702) {
+        console.log('    🔐 EIP-7702 트랜잭션 준비 중...')
         const ethereumJsTx = await this._prepareEip7702Transaction(tx, eip7702Tuples)
         const res = await this.provider.send('eth_sendRawTransaction', [ethereumJsTx])
         const rcpt = await this.provider.getTransactionReceipt(res)
         ret = rcpt.transactionHash
+        console.log('    ✅ EIP-7702 트랜잭션 전송 완료:', ret)
       } else {
+        console.log('    🔐 표준 트랜잭션 전송 중...')
         const resp = await this.signer.sendTransaction(tx)
+        console.log('    ⏳ 트랜잭션 채굴 대기 중...')
         const rcpt = await resp.wait()
         ret = rcpt.transactionHash
+        console.log('    ✅ 트랜잭션 전송 완료:', ret)
+        console.log('    📊 트랜잭션 상세:', {
+          blockNumber: rcpt.blockNumber,
+          gasUsed: rcpt.gasUsed.toString(),
+          status: rcpt.status
+        })
         // ret = await this.provider.send('eth_sendRawTransaction', [signedTx])
         debug('eth_sendTransaction ret=', ret)
       }
@@ -179,7 +248,9 @@ export class BundleManager implements IBundleManager {
       debug('ret=', ret)
       debug('sent handleOps with', userOps.length, 'ops. removing from mempool')
       // hashes are needed for debug rpc only.
+      console.log('    🔐 UserOperation 해시 생성 중...')
       const hashes = await this.getUserOpHashes(userOps)
+      console.log('    ✅ UserOperation 해시 생성 완료 (개수:', hashes.length, ')')
       return {
         transactionHash: ret,
         userOpHashes: hashes
@@ -313,7 +384,10 @@ export class BundleManager implements IBundleManager {
     maxBundleGas?: BigNumberish,
     maxBundleSize?: BigNumberish
   ): Promise<[OperationBase[], EIP7702Authorization[], StorageMap]> {
+    console.log('    📋 Mempool에서 정렬된 엔트리 가져오는 중...')
     const entries = this.mempoolManager.getSortedForInclusion()
+    console.log(`    ✅ Mempool 엔트리 개수: ${entries.length}`)
+    
     const bundle: OperationBase[] = []
     const sharedAuthorizationList: EIP7702Authorization[] = []
 
@@ -326,16 +400,29 @@ export class BundleManager implements IBundleManager {
 
     // all entities that are known to be valid senders in the mempool
     const knownSenders = this.mempoolManager.getKnownSenders()
+    console.log(`    📊 알려진 Sender 개수: ${knownSenders.length}`)
 
     const storageMap: StorageMap = {}
     let totalGas = BigNumber.from(0)
     debug('got mempool of ', entries.length)
     let bundleGas = BigNumber.from(0)
+    
+    let processedCount = 0
+    let skippedCount = 0
+    const skipReasons: { [reason: string]: number } = {}
+    
     // eslint-disable-next-line no-labels
     mainLoop:
     for (const entry of entries) {
+      processedCount++
+      console.log(`    🔍 [${processedCount}/${entries.length}] UserOperation 처리 중:`, {
+        sender: entry.userOp.sender,
+        nonce: (entry.userOp as any).nonce?.toString(),
+        hash: entry.userOpHash.substring(0, 20) + '...'
+      })
       const maxBundleSizeNum = BigNumber.from(maxBundleSize ?? 0).toNumber()
       if (maxBundleSizeNum !== 0 && entries.length >= maxBundleSizeNum) {
+        console.log(`    ⚠️  maxBundleSize 도달: ${maxBundleSize}, 엔트리 개수: ${entries.length}`)
         debug('exiting after maxBundleSize is reached', maxBundleSize, entries.length)
         break
       }
@@ -344,6 +431,10 @@ export class BundleManager implements IBundleManager {
         !BigNumber.from(minBaseFee).eq(0) &&
         BigNumber.from(entry.userOp.maxFeePerGas).lt(minBaseFee)
       ) {
+        const reason = `minBaseFee 부족 (${minBaseFee} > ${entry.userOp.maxFeePerGas})`
+        skipReasons[reason] = (skipReasons[reason] ?? 0) + 1
+        skippedCount++
+        console.log(`    ❌ 건너뜀: ${reason}`)
         debug('skipping transaction not paying minBaseFee', minBaseFee, entry.userOp.maxFeePerGas)
         continue
       }
@@ -352,35 +443,59 @@ export class BundleManager implements IBundleManager {
       const paymasterStatus = this.reputationManager.getStatus(paymaster)
       const deployerStatus = this.reputationManager.getStatus(factory)
       if (paymasterStatus === ReputationStatus.BANNED || deployerStatus === ReputationStatus.BANNED) {
+        const reason = `BANNED 상태 (paymaster: ${paymasterStatus}, factory: ${deployerStatus})`
+        skipReasons[reason] = (skipReasons[reason] ?? 0) + 1
+        skippedCount++
+        console.log(`    ❌ 건너뜀: ${reason}`)
         this.mempoolManager.removeUserOp(entry.userOp)
         continue
       }
       // [GREP-020] - renamed from [SREP-030]
       // @ts-ignore
       if (paymaster != null && (paymasterStatus === ReputationStatus.THROTTLED ?? (stakedEntityCount[paymaster] ?? 0) > THROTTLED_ENTITY_BUNDLE_COUNT)) {
+        const reason = `THROTTLED paymaster (${paymaster})`
+        skipReasons[reason] = (skipReasons[reason] ?? 0) + 1
+        skippedCount++
+        console.log(`    ❌ 건너뜀: ${reason}`)
         debug('skipping throttled paymaster', entry.userOp.sender, (entry.userOp as any).nonce)
         continue
       }
       // [GREP-020] - renamed from [SREP-030]
       // @ts-ignore
       if (factory != null && (deployerStatus === ReputationStatus.THROTTLED ?? (stakedEntityCount[factory] ?? 0) > THROTTLED_ENTITY_BUNDLE_COUNT)) {
+        const reason = `THROTTLED factory (${factory})`
+        skipReasons[reason] = (skipReasons[reason] ?? 0) + 1
+        skippedCount++
+        console.log(`    ❌ 건너뜀: ${reason}`)
         debug('skipping throttled factory', entry.userOp.sender, (entry.userOp as any).nonce)
         continue
       }
       if (senders.has(entry.userOp.sender)) {
+        const reason = `이미 번들에 포함된 sender (${entry.userOp.sender})`
+        skipReasons[reason] = (skipReasons[reason] ?? 0) + 1
+        skippedCount++
+        console.log(`    ❌ 건너뜀: ${reason}`)
         debug('skipping already included sender', entry.userOp.sender, (entry.userOp as any).nonce)
         // allow only a single UserOp per sender per bundle
         continue
       }
+      console.log('    🔍 두 번째 검증 시작...')
       let validationResult: ValidateUserOpResult = EmptyValidateUserOpResult
       try {
         if (!entry.skipValidation) {
           // re-validate UserOp. no need to check stake, since it cannot be reduced between first and 2nd validation
+          const validationStartTime = Date.now()
           validationResult = await this.validationManager.validateUserOp(entry.userOp, entry.referencedContracts, false)
+          const validationTime = Date.now() - validationStartTime
+          console.log(`    ✅ 두 번째 검증 완료 (소요 시간: ${validationTime}ms)`)
         } else {
-          console.warn('Skipping second validation for an injected debug operation, id=', entry.userOpHash)
+          console.warn('    ⚠️  두 번째 검증 건너뛰기 (skipValidation=true), id=', entry.userOpHash)
         }
       } catch (e: any) {
+        const reason = `두 번째 검증 실패: ${e.message}`
+        skipReasons[reason] = (skipReasons[reason] ?? 0) + 1
+        skippedCount++
+        console.log(`    ❌ 건너뜀: ${reason}`)
         await this._handleSecondValidationException(e, paymaster, entry)
         continue
       }
@@ -390,6 +505,10 @@ export class BundleManager implements IBundleManager {
           storageAddress.toLowerCase() !== entry.userOp.sender.toLowerCase() &&
             knownSenders.includes(storageAddress.toLowerCase())
         ) {
+          const reason = `Storage 충돌: 다른 sender의 storage 접근 (${storageAddress})`
+          skipReasons[reason] = (skipReasons[reason] ?? 0) + 1
+          skippedCount++
+          console.log(`    ❌ 건너뜀: ${reason}`)
           console.debug(`UserOperation from ${entry.userOp.sender} sender accessed a storage of another known sender ${storageAddress}`)
           // eslint-disable-next-line no-labels
           continue mainLoop
@@ -399,10 +518,31 @@ export class BundleManager implements IBundleManager {
       // todo: we take UserOp's callGasLimit, even though it will probably require less (but we don't
       // attempt to estimate it to check)
       // which means we could "cram" more UserOps into a bundle.
-      const userOpGasCost = BigNumber.from(validationResult.returnInfo.preOpGas).add(entry.userOp.callGasLimit)
+      if (validationResult.returnInfo == null || validationResult.returnInfo === undefined) {
+        const reason = 'validationResult.returnInfo가 undefined'
+        skipReasons[reason] = (skipReasons[reason] ?? 0) + 1
+        skippedCount++
+        console.log(`    ❌ 건너뜀: ${reason}`)
+        debug('validationResult.returnInfo is undefined, skipping UserOp')
+        continue
+      }
+      const preOpGas = validationResult.returnInfo.preOpGas
+      if (preOpGas == null || preOpGas === undefined) {
+        const reason = 'validationResult.returnInfo.preOpGas가 undefined'
+        skipReasons[reason] = (skipReasons[reason] ?? 0) + 1
+        skippedCount++
+        console.log(`    ❌ 건너뜀: ${reason}`)
+        debug('validationResult.returnInfo.preOpGas is undefined, skipping UserOp')
+        continue
+      }
+      const userOpGasCost = BigNumber.from(preOpGas).add(entry.userOp.callGasLimit)
       const newTotalGas = totalGas.add(userOpGasCost)
       // TODO: reduce duplication here - some difference in logic but close enough
       if (newTotalGas.gt(this.maxBundleGas)) {
+        const reason = `maxBundleGas 초과 (${this.maxBundleGas.toString()} < ${newTotalGas.toString()})`
+        skipReasons[reason] = (skipReasons[reason] ?? 0) + 1
+        skippedCount++
+        console.log(`    ❌ 건너뜀: ${reason}`)
         debug('exiting after config maxBundleGas is reached', this.maxBundleGas, bundleGas, entry.userOpMaxGas)
         break
       }
@@ -410,23 +550,79 @@ export class BundleManager implements IBundleManager {
         maxBundleGas != null &&
         !BigNumber.from(maxBundleGas).eq(0) &&
         newTotalGas.gte(maxBundleGas)) {
+        const reason = `요청 maxBundleGas 초과 (${maxBundleGas.toString()} <= ${newTotalGas.toString()})`
+        skipReasons[reason] = (skipReasons[reason] ?? 0) + 1
+        skippedCount++
+        console.log(`    ❌ 건너뜀: ${reason}`)
         debug('exiting after request maxBundleGas is reached', maxBundleGas, bundleGas, entry.userOpMaxGas)
         break
       }
 
       if (paymaster != null && isAddress(paymaster) && paymaster.toLowerCase() !== AddressZero) {
+        console.log(`    💰 Paymaster 체크 시작: ${paymaster}`)
+        console.log(`    📊 두 번째 검증 결과:`, {
+          prefund: validationResult.returnInfo?.prefund?.toString() ?? 'undefined',
+          preOpGas: validationResult.returnInfo?.preOpGas?.toString() ?? 'undefined'
+        })
+        console.log(`    📊 첫 번째 검증 결과 (entry.prefund):`, entry.prefund?.toString() ?? 'undefined')
+        
         if (paymasterDeposit[paymaster] == null) {
           paymasterDeposit[paymaster] = await this.getPaymasterBalance(paymaster)
+          console.log(`    💰 Paymaster 잔액 조회: ${paymasterDeposit[paymaster].toString()}`)
         }
-        // eslint-disable-next-line @typescript-eslint/no-non-null-assertion
-        if (paymasterDeposit[paymaster].lt(validationResult.returnInfo.prefund!)) {
+        
+        // Use prefund from second validation, or fallback to first validation result stored in entry
+        let prefund = validationResult.returnInfo?.prefund
+        if (prefund == null || prefund === undefined) {
+          // Fallback to prefund from first validation stored in MempoolEntry
+          prefund = entry.prefund
+          console.log(`    ⚠️  두 번째 검증에서 prefund가 없어 첫 번째 검증 결과 사용: ${prefund?.toString() ?? 'undefined'}`)
+        }
+        
+        // If prefund is still undefined or 0, calculate it using EntryPoint's _getRequiredPrefund formula
+        if (prefund == null || prefund === undefined || BigNumber.from(prefund ?? 0).eq(0)) {
+          // EntryPoint._getRequiredPrefund formula:
+          // requiredGas = verificationGasLimit + callGasLimit + paymasterVerificationGasLimit + paymasterPostOpGasLimit + preVerificationGas
+          // requiredPrefund = requiredGas * maxFeePerGas
+          const userOp = entry.userOp as UserOperation
+          const requiredGas = BigNumber.from(userOp.preVerificationGas ?? 0)
+            .add(userOp.verificationGasLimit ?? 0)
+            .add(userOp.callGasLimit ?? 0)
+            .add(userOp.paymasterVerificationGasLimit ?? 0)
+            .add(userOp.paymasterPostOpGasLimit ?? 0)
+          
+          const maxFeePerGas = BigNumber.from(userOp.maxFeePerGas ?? 0)
+          const calculatedPrefund = requiredGas.mul(maxFeePerGas)
+          prefund = calculatedPrefund
+          console.log(`    ⚠️  prefund 계산 (EntryPoint 공식):`)
+          console.log(`        requiredGas = ${userOp.preVerificationGas?.toString() ?? '0'} + ${userOp.verificationGasLimit?.toString() ?? '0'} + ${userOp.callGasLimit?.toString() ?? '0'} + ${userOp.paymasterVerificationGasLimit?.toString() ?? '0'} + ${userOp.paymasterPostOpGasLimit?.toString() ?? '0'} = ${requiredGas.toString()}`)
+          console.log(`        prefund = ${requiredGas.toString()} * ${maxFeePerGas.toString()} = ${calculatedPrefund.toString()}`)
+        }
+        
+        if (prefund == null || prefund === undefined || BigNumber.from(prefund ?? 0).eq(0)) {
+          const reason = `prefund가 undefined이거나 0 (paymaster 체크 불가) - 두 번째 검증: ${validationResult.returnInfo?.prefund?.toString() ?? 'undefined'}, 첫 번째 검증: ${entry.prefund?.toString() ?? 'undefined'}`
+          skipReasons[reason] = (skipReasons[reason] ?? 0) + 1
+          skippedCount++
+          console.log(`    ❌ 건너뜀: ${reason}`)
+          debug('validationResult.returnInfo.prefund is undefined, skipping paymaster check')
+          continue
+        }
+        
+        const prefundBN = BigNumber.from(prefund)
+        console.log(`    ✅ 사용할 prefund: ${prefundBN.toString()}`)
+        
+        if (paymasterDeposit[paymaster].lt(prefundBN)) {
+          const reason = `Paymaster 잔액 부족 (${paymasterDeposit[paymaster].toString()} < ${prefundBN.toString()})`
+          skipReasons[reason] = (skipReasons[reason] ?? 0) + 1
+          skippedCount++
+          console.log(`    ❌ 건너뜀: ${reason}`)
           // not enough balance in paymaster to pay for all UserOps
           // (but it passed validation, so it can sponsor them separately
           continue
         }
         stakedEntityCount[paymaster] = (stakedEntityCount[paymaster] ?? 0) + 1
-        // eslint-disable-next-line @typescript-eslint/no-non-null-assertion
-        paymasterDeposit[paymaster] = paymasterDeposit[paymaster].sub(validationResult.returnInfo.prefund!)
+        paymasterDeposit[paymaster] = paymasterDeposit[paymaster].sub(prefundBN)
+        console.log(`    ✅ Paymaster 체크 통과, 남은 잔액: ${paymasterDeposit[paymaster].toString()}`)
       }
       if (factory != null && isAddress(factory)) {
         stakedEntityCount[factory] = (stakedEntityCount[factory] ?? 0) + 1
@@ -441,6 +637,10 @@ export class BundleManager implements IBundleManager {
 
       const mergeOk = this.mergeEip7702Authorizations(entry, sharedAuthorizationList)
       if (!mergeOk) {
+        const reason = 'EIP-7702 authorization 충돌'
+        skipReasons[reason] = (skipReasons[reason] ?? 0) + 1
+        skippedCount++
+        console.log(`    ❌ 건너뜀: ${reason}`)
         debug('unable to add bundle as it relies on an EIP-7702 tuple that conflicts with other UserOperations')
         continue
       }
@@ -449,7 +649,20 @@ export class BundleManager implements IBundleManager {
       senders.add(entry.userOp.sender)
       bundle.push(entry.userOp)
       totalGas = newTotalGas
+      console.log(`    ✅ 번들에 추가 완료! (현재 번들 크기: ${bundle.length})`)
     }
+    
+    console.log(`    📊 번들 생성 완료 요약:`)
+    console.log(`      - 처리된 엔트리: ${processedCount}`)
+    console.log(`      - 건너뛴 엔트리: ${skippedCount}`)
+    console.log(`      - 번들에 포함된 UserOps: ${bundle.length}`)
+    if (Object.keys(skipReasons).length > 0) {
+      console.log(`      - 건너뛴 이유:`)
+      Object.entries(skipReasons).forEach(([reason, count]) => {
+        console.log(`        * ${reason}: ${count}회`)
+      })
+    }
+    
     return [bundle, sharedAuthorizationList, storageMap]
   }
 

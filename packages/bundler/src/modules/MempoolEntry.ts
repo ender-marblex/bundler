@@ -12,11 +12,22 @@ export class MempoolEntry {
     readonly skipValidation: boolean,
     readonly aggregator?: string
   ) {
+    const op = this.userOp as UserOperation
+    const preVerificationGas = op.preVerificationGas ?? 0
+    const callGasLimit = op.callGasLimit ?? 0
+    const verificationGasLimit = op.verificationGasLimit ?? 0
+    const paymasterVerificationGasLimit = op.paymasterVerificationGasLimit ?? 0
+    const paymasterPostOpGasLimit = op.paymasterPostOpGasLimit ?? 0
+    
+    if (preVerificationGas === undefined || callGasLimit === undefined || verificationGasLimit === undefined) {
+      throw new Error(`MempoolEntry: missing required gas fields - preVerificationGas: ${preVerificationGas}, callGasLimit: ${callGasLimit}, verificationGasLimit: ${verificationGasLimit}`)
+    }
+    
     this.userOpMaxGas = BigNumber
-      .from((this.userOp as UserOperation).preVerificationGas ?? 0)
-      .add(this.userOp.callGasLimit)
-      .add(this.userOp.verificationGasLimit)
-      .add(this.userOp.paymasterVerificationGasLimit ?? 0)
-      .add(this.userOp.paymasterPostOpGasLimit ?? 0)
+      .from(preVerificationGas)
+      .add(callGasLimit)
+      .add(verificationGasLimit)
+      .add(paymasterVerificationGasLimit)
+      .add(paymasterPostOpGasLimit)
   }
 }

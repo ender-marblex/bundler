@@ -266,10 +266,18 @@ export async function callGetUserOpHashWithCode (entryPoint: IEntryPoint, userOp
       }
     }
   }
+  // Clean undefined values before packing
+  const cleanedUserOp: any = {}
+  Object.keys(userOp).forEach(key => {
+    const value = (userOp as any)[key]
+    if (value !== undefined) {
+      cleanedUserOp[key] = value
+    }
+  })
   return await (entryPoint.provider as JsonRpcProvider).send('eth_call', [
     {
       to: entryPoint.address,
-      data: entryPoint.interface.encodeFunctionData('getUserOpHash', [packUserOp(userOp)])
+      data: entryPoint.interface.encodeFunctionData('getUserOpHash', [packUserOp(cleanedUserOp as UserOperation)])
     }, 'latest', stateOverride
   ])
 }

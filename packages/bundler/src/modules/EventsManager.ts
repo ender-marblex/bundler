@@ -36,19 +36,39 @@ export class EventsManager {
    * process all new events since last run
    */
   async handlePastEvents (): Promise<void> {
+    const mempoolCountBefore = this.mempoolManager.count()
     if (this.lastBlock === undefined) {
-      this.lastBlock = Math.max(1, await this.entryPoint.provider.getBlockNumber() - 1000)
+      const currentBlock = await this.entryPoint.provider.getBlockNumber()
+      this.lastBlock = Math.max(1, currentBlock - 1000)
+      console.log(`      📍 초기 lastBlock 설정: ${this.lastBlock} (현재 블록: ${currentBlock})`)
     }
+    console.log(`      🔍 이벤트 조회 중 (lastBlock: ${this.lastBlock})...`)
     try {
       const events = await this.entryPoint.queryFilter({ address: this.entryPoint.address }, this.lastBlock)
+      console.log(`      ✅ 이벤트 ${events.length}개 발견`)
+      let userOpEventCount = 0
       for (const ev of events) {
+        if (ev.event === 'UserOperationEvent') {
+          userOpEventCount++
+        }
         this.handleEvent(ev)
+      }
+      if (userOpEventCount > 0) {
+        console.log(`      📊 UserOperationEvent ${userOpEventCount}개 처리됨`)
       }
     } catch (e) {
       // if we processed latest block, then "lastBlock" is set to one above, so the new geth 15.9 error can safely be ignored.
       if (!(e as Error).message.includes('invalid block range params')) {
+        console.log(`      ❌ 이벤트 처리 중 오류: ${(e as Error).message}`)
         throw e
+      } else {
+        console.log(`      ⚠️  블록 범위 파라미터 오류 무시됨`)
       }
+    }
+    const mempoolCountAfter = this.mempoolManager.count()
+    const removedCount = mempoolCountBefore - mempoolCountAfter
+    if (removedCount > 0) {
+      console.log(`      ✅ Mempool에서 ${removedCount}개 UserOperation 제거됨`)
     }
   }
 
@@ -93,6 +113,7 @@ export class EventsManager {
 
   handleUserOperationEvent (ev: UserOperationEventEvent): void {
     const hash = ev.args.userOpHash
+    console.log(`        🗑️  UserOperationEvent 처리: hash=${hash.substring(0, 20)}..., sender=${ev.args.sender}, block=${ev.blockNumber}`)
     this.mempoolManager.removeUserOp(hash)
     this._includedAddress(ev.args.sender)
     this._includedAddress(ev.args.paymaster)

@@ -197,14 +197,64 @@ export class MethodHandlerERC4337 {
   }
 
   async sendUserOperation (userOp: UserOperation, entryPointInput: string): Promise<string> {
+    console.log('\n========== [BUNDLER] UserOperation 수신 시작 ==========')
+    console.log('📥 [1/6] RPC 요청 수신 (MethodHandlerERC4337.sendUserOperation)')
+    console.log('  - EntryPoint:', entryPointInput)
+    console.log('  - Sender:', userOp.sender)
+    console.log('  - Nonce:', tostr(userOp.nonce))
+    console.log('  - Paymaster:', userOp.paymaster ?? '(없음)')
+    console.log('  - CallData 길이:', userOp.callData?.length ?? 0)
+    console.log('  - Gas Limits:', {
+      preVerificationGas: userOp.preVerificationGas != null ? tostr(userOp.preVerificationGas) : 'N/A',
+      verificationGasLimit: userOp.verificationGasLimit != null ? tostr(userOp.verificationGasLimit) : 'N/A',
+      callGasLimit: userOp.callGasLimit != null ? tostr(userOp.callGasLimit) : 'N/A',
+      paymasterVerificationGasLimit: userOp.paymasterVerificationGasLimit != null ? tostr(userOp.paymasterVerificationGasLimit) : 'N/A',
+      paymasterPostOpGasLimit: userOp.paymasterPostOpGasLimit != null ? tostr(userOp.paymasterPostOpGasLimit) : 'N/A'
+    })
+    console.log('  - Gas Prices:', {
+      maxFeePerGas: userOp.maxFeePerGas != null ? tostr(userOp.maxFeePerGas) : 'N/A',
+      maxPriorityFeePerGas: userOp.maxPriorityFeePerGas != null ? tostr(userOp.maxPriorityFeePerGas) : 'N/A'
+    })
+    
     if (!this.config.eip7702Support && userOp.eip7702Auth != null) {
       throw new Error('EIP-7702 tuples are not supported')
     }
-    await this._validateParameters(userOp, entryPointInput)
+    // Remove undefined values from userOp to prevent BigNumber errors
+    const cleanedUserOp = this._cleanUserOp(userOp)
+    console.log('  ✅ UserOperation 정리 완료 (undefined 값 제거)')
+    
+    await this._validateParameters(cleanedUserOp, entryPointInput)
+    console.log('  ✅ 파라미터 검증 완료')
 
-    debug(`UserOperation: Sender=${userOp.sender}  Nonce=${tostr(userOp.nonce)} EntryPoint=${entryPointInput} Paymaster=${userOp.paymaster ?? ''} ${userOp.eip7702Auth != null ? 'eip-7702 auth' : ''}`)
-    await this.execManager.sendUserOperation(userOp, entryPointInput, false)
-    return await callGetUserOpHashWithCode(this.entryPoint, userOp)
+    debug(`UserOperation: Sender=${cleanedUserOp.sender}  Nonce=${tostr(cleanedUserOp.nonce)} EntryPoint=${entryPointInput} Paymaster=${cleanedUserOp.paymaster ?? ''} ${cleanedUserOp.eip7702Auth != null ? 'eip-7702 auth' : ''}`)
+    
+    console.log('📤 [2/6] ExecutionManager로 전달')
+    await this.execManager.sendUserOperation(cleanedUserOp, entryPointInput, false)
+    
+    const userOpHash = await callGetUserOpHashWithCode(this.entryPoint, cleanedUserOp)
+    console.log('  ✅ UserOperation Hash 생성:', userOpHash)
+    console.log('========== [BUNDLER] UserOperation 수신 완료 ==========\n')
+    return userOpHash
+  }
+
+  private _cleanUserOp (userOp: UserOperation): UserOperation {
+    const cleaned: any = {}
+    // Use Object.keys to get all enumerable properties
+    Object.keys(userOp).forEach(key => {
+      const value = (userOp as any)[key]
+      if (value !== undefined && value !== null) {
+        cleaned[key] = value
+      }
+    })
+    // Also check for non-enumerable properties that might be needed
+    const requiredFields = ['sender', 'nonce', 'callData', 'verificationGasLimit', 'callGasLimit', 
+                            'preVerificationGas', 'maxFeePerGas', 'maxPriorityFeePerGas', 'signature']
+    requiredFields.forEach(key => {
+      if ((userOp as any)[key] == null) {
+        throw new Error(`Missing required field: ${key}`)
+      }
+    })
+    return cleaned as UserOperation
   }
 
   async _getUserOperationEvent (userOpHash: string): Promise<UserOperationEventEvent> {

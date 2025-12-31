@@ -1,5 +1,5 @@
 import { UserOperation } from '@account-abstraction/utils'
-import { BigNumberish, BytesLike } from 'ethers'
+import { BigNumber, BigNumberish, BytesLike } from 'ethers'
 
 /**
  * returned paymaster parameters.
@@ -36,5 +36,51 @@ export class PaymasterAPI {
    */
   async getPaymasterData (userOp: Partial<UserOperation>): Promise<PaymasterParams | null> {
     return null
+  }
+}
+
+/**
+ * Simple paymaster API implementation that uses a fixed paymaster address.
+ * This is suitable for basic paymaster contracts that don't require additional data or signatures.
+ */
+export class SimplePaymasterAPI extends PaymasterAPI {
+  constructor (
+    private readonly paymasterAddress: string,
+    private readonly paymasterVerificationGasLimit: BigNumberish = 100000,
+    private readonly paymasterPostOpGasLimit: BigNumberish = 0,
+    private readonly paymasterData?: BytesLike
+  ) {
+    super()
+  }
+
+  /**
+   * return temporary values to put into the paymaster fields.
+   * @param userOp the partially-filled UserOperation. Should be filled with tepmorary values for all
+   *    fields except paymaster fields.
+   * @return temporary paymaster parameters, that can be used for gas estimations
+   */
+  async getTemporaryPaymasterData (userOp: Partial<UserOperation>): Promise<PaymasterParams | null> {
+    return {
+      paymaster: this.paymasterAddress,
+      paymasterData: this.paymasterData ?? '0x',
+      paymasterVerificationGasLimit: this.paymasterVerificationGasLimit,
+      paymasterPostOpGasLimit: this.paymasterPostOpGasLimit
+    }
+  }
+
+  /**
+   * after gas estimation, return final paymaster parameters to replace the above tepmorary value.
+   * @param userOp a partially-filled UserOperation (without signature and paymasterAndData
+   *  note that the "preVerificationGas" is incomplete: it can't account for the
+   *  paymasterAndData value, which will only be returned by this method..
+   * @returns the values to put into paymaster fields, null to leave them empty
+   */
+  async getPaymasterData (userOp: Partial<UserOperation>): Promise<PaymasterParams | null> {
+    return {
+      paymaster: this.paymasterAddress,
+      paymasterData: this.paymasterData ?? '0x',
+      paymasterVerificationGasLimit: this.paymasterVerificationGasLimit,
+      paymasterPostOpGasLimit: this.paymasterPostOpGasLimit
+    }
   }
 }

@@ -51,6 +51,9 @@ export function unpackAccountGasLimits (accountGasLimits: BytesLike): {
 }
 
 export function packUint (high128: BigNumberish, low128: BigNumberish): string {
+  if (high128 == null || high128 === undefined || low128 == null || low128 === undefined) {
+    throw new Error(`packUint: invalid arguments - high128: ${high128}, low128: ${low128}`)
+  }
   return hexZeroPad(BigNumber.from(high128).shl(128).add(low128).toHexString(), 32)
 }
 
@@ -144,18 +147,37 @@ export function unpackPaymasterAndData (paymasterAndData: BytesLike): {
 
 export function packUserOp (op: UserOperation): PackedUserOperation {
   let paymasterAndData: BytesLike
-  if (op.paymaster == null) {
+  if (op.paymaster == null || op.paymaster === '') {
     paymasterAndData = '0x'
   } else {
-    if (op.paymasterVerificationGasLimit == null || op.paymasterPostOpGasLimit == null) {
+    if (op.paymasterVerificationGasLimit == null || op.paymasterVerificationGasLimit === undefined || 
+        op.paymasterPostOpGasLimit == null || op.paymasterPostOpGasLimit === undefined) {
       throw new Error('paymaster with no gas limits')
     }
-    paymasterAndData = packPaymasterData(op.paymaster, op.paymasterVerificationGasLimit, op.paymasterPostOpGasLimit, op.paymasterData)
+    paymasterAndData = packPaymasterData(op.paymaster, op.paymasterVerificationGasLimit, op.paymasterPostOpGasLimit, op.paymasterData ?? '0x')
   }
   let initCode = op.factory == null ? '0x' : hexConcat([op.factory, op.factoryData ?? '0x'])
   if (op.factory === EIP_7702_MARKER_INIT_CODE) {
     const eip7702FlagInitCode = EIP_7702_MARKER_INIT_CODE.padEnd(42, '0')
     initCode = hexConcat([eip7702FlagInitCode, op.factoryData ?? '0x'])
+  }
+  if (op.nonce == null || op.nonce === undefined) {
+    throw new Error('packUserOp: nonce is required')
+  }
+  if (op.verificationGasLimit == null || op.verificationGasLimit === undefined) {
+    throw new Error('packUserOp: verificationGasLimit is required')
+  }
+  if (op.callGasLimit == null || op.callGasLimit === undefined) {
+    throw new Error('packUserOp: callGasLimit is required')
+  }
+  if (op.preVerificationGas == null || op.preVerificationGas === undefined) {
+    throw new Error('packUserOp: preVerificationGas is required')
+  }
+  if (op.maxPriorityFeePerGas == null || op.maxPriorityFeePerGas === undefined) {
+    throw new Error('packUserOp: maxPriorityFeePerGas is required')
+  }
+  if (op.maxFeePerGas == null || op.maxFeePerGas === undefined) {
+    throw new Error('packUserOp: maxFeePerGas is required')
   }
   return {
     sender: op.sender,
@@ -370,6 +392,7 @@ export function deepHexlify (obj: any): any {
     return obj.map(member => deepHexlify(member))
   }
   return Object.keys(obj)
+    .filter(key => obj[key] !== undefined)
     .reduce((set, key) => ({
       ...set,
       [key]: deepHexlify(obj[key])

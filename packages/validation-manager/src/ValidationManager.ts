@@ -209,7 +209,8 @@ export class ValidationManager implements IValidationManager {
     // build a batch with 2 UserOps: the one under test, and a "flag" UserOp that triggers "AA94" revert error,
     // and stops the validation.
     // That is, if we end up with FailedOp(1) with "AA94", it means the UserOp-under-test passed successfully.
-    const data = this.entryPoint.interface.encodeFunctionData('handleOps', [[packUserOp(userOp)], AddressZero])
+    const cleanedUserOp = this._cleanUserOp(userOp)
+    const data = this.entryPoint.interface.encodeFunctionData('handleOps', [[packUserOp(cleanedUserOp)], AddressZero])
     const prevg = this.preVerificationGasCalculator._calculate(userOp, {})
     const gasValue = sum(prevg, userOp.verificationGasLimit, userOp.paymasterVerificationGasLimit)
     const tx = {
@@ -249,7 +250,8 @@ export class ValidationManager implements IValidationManager {
   ): Promise<[ValidationResult, ERC7562Call | null, BundlerTracerResult | null]> {
     const userOp = operation as UserOperation
     const provider = this.entryPoint.provider as JsonRpcProvider
-    const handleOpsData = this.entryPoint.interface.encodeFunctionData('handleOps', [[packUserOp(userOp)], AddressZero])
+    const cleanedUserOp = this._cleanUserOp(userOp)
+    const handleOpsData = this.entryPoint.interface.encodeFunctionData('handleOps', [[packUserOp(cleanedUserOp)], AddressZero])
 
     const prevg = this.preVerificationGasCalculator._calculate(userOp, {})
 
@@ -339,7 +341,7 @@ export class ValidationManager implements IValidationManager {
     previousCodeHashes?: ReferencedCodeHashes,
     checkStakes = true
   ): Promise<ValidateUserOpResult> {
-    const userOp = operation as UserOperation
+    const userOp = this._cleanUserOp(operation as UserOperation)
     if (previousCodeHashes != null && previousCodeHashes.addresses.length > 0) {
       const { hash: codeHashes } = await this.getCodeHashes(previousCodeHashes.addresses)
       // [COD-010]
@@ -534,7 +536,8 @@ export class ValidationManager implements IValidationManager {
   }
 
   async getOperationHash (userOp: OperationBase): Promise<string> {
-    return await callGetUserOpHashWithCode(this.entryPoint, userOp as UserOperation)
+    const cleanedUserOp = this._cleanUserOp(userOp as UserOperation)
+    return await callGetUserOpHashWithCode(this.entryPoint, cleanedUserOp)
   }
 
   flattenCalls (calls: any[]): any[] {
@@ -635,5 +638,16 @@ export class ValidationManager implements IValidationManager {
       preOpGas: params.opInfo.preOpGas,
       prefund: params.opInfo.prefund
     }
+  }
+
+  private _cleanUserOp (userOp: UserOperation): UserOperation {
+    const cleaned: any = {}
+    Object.keys(userOp).forEach(key => {
+      const value = (userOp as any)[key]
+      if (value !== undefined && value !== null) {
+        cleaned[key] = value
+      }
+    })
+    return cleaned as UserOperation
   }
 }

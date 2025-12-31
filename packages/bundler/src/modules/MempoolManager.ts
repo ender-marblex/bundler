@@ -70,6 +70,7 @@ export class MempoolManager {
     userOpHash: string,
     validationResult: ValidationResult
   ): void {
+    console.log('  📝 [5/6] MempoolManager.addUserOp 시작')
     const entry = new MempoolEntry(
       userOp,
       userOpHash,
@@ -79,32 +80,55 @@ export class MempoolManager {
       validationResult.aggregatorInfo?.addr
     )
     const packedNonce = getPackedNonce(entry.userOp)
+    console.log('  📦 MempoolEntry 생성 완료:', {
+      userOpHash,
+      packedNonce,
+      prefund: (validationResult.returnInfo.prefund ?? 0).toString()
+    })
+    
     const index = this._findBySenderNonce(userOp.sender, packedNonce)
     let oldEntry: MempoolEntry | undefined
     if (index !== -1) {
       oldEntry = this.mempool[index]
+      console.log('  🔄 기존 UserOperation 발견 (교체 모드)')
+      console.log('  📊 기존 UserOperation:', {
+        hash: oldEntry.userOpHash,
+        maxPriorityFeePerGas: oldEntry.userOp.maxPriorityFeePerGas?.toString(),
+        maxFeePerGas: oldEntry.userOp.maxFeePerGas?.toString()
+      })
       this.checkReplaceUserOp(oldEntry, entry)
+      console.log('  ✅ 교체 검증 통과')
       debug('replace userOp', userOp.sender, packedNonce)
       this.mempool[index] = entry
+      console.log('  ✅ Mempool에서 교체 완료')
     } else {
+      console.log('  ➕ 새로운 UserOperation 추가 모드')
       debug('add userOp', userOp.sender, packedNonce)
       if (!skipValidation) {
+        console.log('  🔍 Reputation 및 Multiple Roles 검증 중...')
         this.checkReputation(validationResult)
         this.checkMultipleRolesViolation(userOp)
+        console.log('  ✅ Reputation 및 Multiple Roles 검증 완료')
       }
+      console.log('  📊 Entry Count 업데이트 중...')
       this.incrementEntryCount(userOp.sender)
       if (userOp.paymaster != null) {
         this.incrementEntryCount(userOp.paymaster)
+        console.log('    - Sender:', userOp.sender, 'count:', this.entryCount(userOp.sender))
+        console.log('    - Paymaster:', userOp.paymaster, 'count:', this.entryCount(userOp.paymaster))
       }
       if (userOp.factory != null) {
         this.incrementEntryCount(userOp.factory)
+        console.log('    - Factory:', userOp.factory, 'count:', this.entryCount(userOp.factory))
       }
       this.mempool.push(entry)
+      console.log('  ✅ Mempool에 추가 완료 (총 개수:', this.mempool.length, ')')
     }
     if (oldEntry != null) {
       this.updateSeenStatus(oldEntry.aggregator, oldEntry.userOp, validationResult.senderInfo, -1)
     }
     this.updateSeenStatus(validationResult.aggregatorInfo?.addr, userOp, validationResult.senderInfo)
+    console.log('  ✅ MempoolManager.addUserOp 완료')
   }
 
   private updateSeenStatus (aggregator: string | undefined, userOp: OperationBase, senderInfo: StakeInfo, val = 1): void {

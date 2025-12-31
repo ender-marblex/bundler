@@ -253,8 +253,10 @@ export abstract class BaseAccountAPI {
       authorizationList: []
     }
 
+    console.log('before-paymasterAPI', this.paymasterAPI)
     if (this.paymasterAPI != null) {
       // fill (partial) preVerificationGas (all except the cost of the generated paymasterAndData)
+      console.log('pre-paymaster partialUserOp', partialUserOp)
       const pmFields = await this.paymasterAPI.getTemporaryPaymasterData(partialUserOp)
       if (pmFields != null) {
         partialUserOp = {
@@ -262,9 +264,10 @@ export abstract class BaseAccountAPI {
           paymaster: pmFields?.paymaster,
           paymasterPostOpGasLimit: pmFields?.paymasterPostOpGasLimit,
           paymasterVerificationGasLimit: pmFields?.paymasterVerificationGasLimit,
-          paymasterData: pmFields?.paymasterData
+          paymasterData: pmFields?.paymasterData ?? '0x'
         } as any
       }
+      console.log('post-paymaster partialUserOp', partialUserOp)
     }
     return {
       ...partialUserOp,

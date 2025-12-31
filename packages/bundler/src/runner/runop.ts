@@ -11,7 +11,7 @@ import { formatEther, keccak256, parseEther } from 'ethers/lib/utils'
 import { Command } from 'commander'
 import { DeterministicDeployer, erc4337RuntimeVersion, SimpleAccountFactory__factory } from '@account-abstraction/utils'
 import fs from 'fs'
-import { HttpRpcClient, SimpleAccountAPI } from '@account-abstraction/sdk'
+import { HttpRpcClient, SimpleAccountAPI, SimplePaymasterAPI } from '@account-abstraction/sdk'
 import { runBundler } from '../runBundler'
 import { BundlerServer } from '../BundlerServer'
 import { getNetworkProvider } from '../Config'
@@ -43,7 +43,7 @@ class Runner {
     return await this.accountApi.getCounterFactualAddress()
   }
 
-  async init (deploymentSigner?: Signer): Promise<this> {
+  async init (deploymentSigner?: Signer, paymasterAddress?: string): Promise<this> {
     const net = await this.provider.getNetwork()
     const chainId = net.chainId
     const dep = new DeterministicDeployer(this.provider)
@@ -58,12 +58,20 @@ class Runner {
       await dep1.deterministicDeploy(new SimpleAccountFactory__factory(), 0, [this.entryPointAddress])
     }
     this.bundlerProvider = new HttpRpcClient(this.bundlerUrl, this.entryPointAddress, chainId)
+    
+    const paymasterAPI = paymasterAddress != null
+      ? new SimplePaymasterAPI(paymasterAddress)
+      : undefined
+
+    console.log('paymasterAPI', paymasterAPI)
+    
     this.accountApi = new SimpleAccountAPI({
       provider: this.provider,
       entryPointAddress: this.entryPointAddress,
       factoryAddress: accountDeployer,
       owner: this.accountOwner,
-      index: this.index
+      index: this.index,
+      paymasterAPI
     })
     return this
   }
@@ -79,15 +87,29 @@ class Runner {
     return e
   }
 
-  async runUserOp (target: string, data: string): Promise<void> {
+  async runUserOp (target: string, data: string, waitForReceipt = true): Promise<string | null> {
     const userOp = await this.accountApi.createSignedUserOp({
       target,
       data
     })
     try {
+      console.log('userOp', userOp)
       const userOpHash = await this.bundlerProvider.sendUserOpToBundler(userOp)
-      const txid = await this.accountApi.getUserOpReceipt(userOpHash)
-      console.log('reqId', userOpHash, 'txid=', txid)
+      if (waitForReceipt) {
+        // Wait for receipt with timeout
+        let receipt: string | null = null
+        let attempts = 0
+        while (receipt == null && attempts < 60) {
+          await new Promise(resolve => setTimeout(resolve, 1000))
+          receipt = await this.accountApi.getUserOpReceipt(userOpHash).catch(() => null)
+          attempts++
+        }
+        console.log('reqId', userOpHash, 'txid=', receipt)
+        return receipt
+      } else {
+        console.log('reqId', userOpHash, 'txid= (not waiting)')
+        return null
+      }
     } catch (e: any) {
       throw this.parseExpectedGas(e)
     }
@@ -105,6 +127,7 @@ async function main (): Promise<void> {
     .option('--deployFactory', 'Deploy the "account deployer" on this network (default for testnet)')
     .option('--show-stack-traces', 'Show stack traces.')
     .option('--selfBundler', 'run bundler in-process (for debugging the bundler)')
+    .option('--paymaster <address>', 'paymaster contract address for gasless transactions')
 
   const opts = program.parse().opts()
   const provider = getNetworkProvider(opts.network)
@@ -156,7 +179,11 @@ async function main (): Promise<void> {
 
   const index = opts.nonce ?? Date.now()
   console.log('using account index=', index)
-  const client = await new Runner(provider, opts.bundlerUrl, accountOwner, opts.entryPoint, index).init(deployFactory ? signer : undefined)
+  const paymasterAddress = opts.paymaster
+  if (paymasterAddress != null) {
+    console.log('using paymaster address=', paymasterAddress)
+  }
+  const client = await new Runner(provider, opts.bundlerUrl, accountOwner, opts.entryPoint, index).init(deployFactory ? signer : undefined, paymasterAddress)
 
   const addr = await client.getAddress()
 
@@ -172,19 +199,26 @@ async function main (): Promise<void> {
   console.log('account address', addr, 'deployed=', await isDeployed(addr), 'bal=', formatEther(bal))
 
   // 넉넉하게 전송
-  await signer.sendTransaction({
-    to: addr,
-    value: parseEther('1')
-  }).then(async tx => await tx.wait())
+  // await signer.sendTransaction({
+  //   to: addr,
+  //   value: parseEther('1')
+  // }).then(async tx => await tx.wait())
 
   const dest = addr
   const data = keccak256(Buffer.from('entryPoint()')).slice(0, 10)
   console.log('data=', data)
-  await client.runUserOp(dest, data)
-  console.log('after run1')
+  const txid1 = await client.runUserOp(dest, data, true)
+  console.log('after run1, txid1=', txid1)
+  
+  // Wait a bit before sending second request to ensure first one is processed
+  if (txid1 == null) {
+    console.log('first transaction not yet mined, waiting...')
+    await new Promise(resolve => setTimeout(resolve, 3000))
+  }
+  
   // client.accountApi.overheads!.perUserOp = 30000
-  await client.runUserOp(dest, data)
-  console.log('after run2')
+  const txid2 = await client.runUserOp(dest, data, true)
+  console.log('after run2, txid2=', txid2)
   await bundler?.stop()
 }
 
