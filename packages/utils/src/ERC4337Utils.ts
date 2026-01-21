@@ -15,9 +15,9 @@ import { UserOperation } from './interfaces/UserOperation'
 
 // UserOperation is the first parameter of getUserOpHash
 const getUserOpHashMethod = 'getUserOpHash'
-const PackedUserOpType = entryPointAbi.find(entry => entry.name === getUserOpHashMethod)?.inputs[0]
+const PackedUserOpType = entryPointAbi.find((entry: { name?: string }) => entry.name === getUserOpHashMethod)?.inputs[0]
 if (PackedUserOpType == null) {
-  throw new Error(`unable to find method ${getUserOpHashMethod} in EP ${entryPointAbi.filter(x => x.type === 'function').map(x => x.name).join(',')}`)
+  throw new Error(`unable to find method ${getUserOpHashMethod} in EP ${entryPointAbi.filter((x: { type?: string }) => x.type === 'function').map((x: { name?: string }) => x.name).join(',')}`)
 }
 
 export const AddressZero = ethers.constants.AddressZero

@@ -40,6 +40,11 @@ const config: HardhatUserConfig = {
     },
     sepolia: getInfuraNetwork('sepolia')
   },
+  namedAccounts: {
+    deployer: {
+      default: 0
+    }
+  },
   solidity: {
     version: '0.8.28',
     settings: {

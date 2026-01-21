@@ -5,6 +5,7 @@ import {
   deployEntryPoint,
   erc4337RuntimeVersion,
   IEntryPoint,
+  IEntryPoint__factory,
   RpcError,
   supportsRpcMethod
 } from '@account-abstraction/utils'
@@ -174,14 +175,21 @@ export async function runBundler (argv: string[], overrideExit = true): Promise<
     }
   }
 
-  const {
-    entryPoint
-  } = await connectContracts(wallet, !config.rip7560)
-
-  if (entryPoint != null && entryPoint?.address?.toLowerCase() !== config.entryPoint.toLowerCase() && [1337, 31337].includes(chainId)) {
-    console.warn('NOTICE: overriding config entrypoint: ', { entryPoint: entryPoint.address })
-    config.entryPoint = entryPoint.address
+  let entryPoint: IEntryPoint | undefined
+  if (config.rip7560) {
+    const res = await connectContracts(wallet, false)
+    entryPoint = res.entryPoint
+  } else if (config.entryPoint) {
+    // Use configured EntryPoint - do not override with deployEntryPoint
+    entryPoint = IEntryPoint__factory.connect(config.entryPoint, wallet)
     config.senderCreator = await entryPoint.senderCreator()
+  } else {
+    const res = await connectContracts(wallet, true)
+    entryPoint = res.entryPoint
+    if (entryPoint != null) {
+      config.entryPoint = entryPoint.address
+      config.senderCreator = await entryPoint.senderCreator()
+    }
   }
 
   // bundleSize=1 replicate current immediate bundling mode

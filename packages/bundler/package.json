@@ -18,6 +18,7 @@
     "hardhat-node": "npx hardhat node --no-deploy",
     "hardhat-node-with-deploy": "npx hardhat node",
     "hardhat-deploy": "hardhat deploy",
+    "hardhat-deploy-paymaster": "hardhat deploy --tags Paymaster",
     "hardhat-test": "hardhat test",
     "lint": "eslint -f unix .",
     "lint-fix": "eslint -f unix . --fix",
@@ -25,7 +26,6 @@
     "watch-tsc": "tsc -w --preserveWatchOutput"
   },
   "dependencies": {
-    "@account-abstraction/contracts": "^0.8.0",
     "@account-abstraction/sdk": "^0.8.0",
     "@account-abstraction/utils": "^0.8.0",
     "@account-abstraction/validation-manager": "^0.8.0",

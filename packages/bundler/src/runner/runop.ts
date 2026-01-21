@@ -121,7 +121,7 @@ async function main (): Promise<void> {
     .version(erc4337RuntimeVersion)
     .option('--network <string>', 'network name or url', 'http://localhost:8545')
     .option('--mnemonic <file>', 'mnemonic/private-key file of signer account (to fund account)')
-    .option('--bundlerUrl <url>', 'bundler URL', 'http://localhost:3000/rpc')
+    .option('--bundlerUrl <url>', 'bundler URL', 'http://localhost:4000/rpc')
     .option('--entryPoint <string>', 'address of the supported EntryPoint contract', ENTRY_POINT)
     .option('--nonce <number>', 'account creation nonce. default to random (deploy new account)')
     .option('--deployFactory', 'Deploy the "account deployer" on this network (default for testnet)')
