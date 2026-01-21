@@ -1,17 +1,17 @@
 import { HardhatRuntimeEnvironment } from 'hardhat/types'
 import { DeployFunction } from 'hardhat-deploy/types'
 import { ethers } from 'hardhat'
-
-// 기본 EntryPoint 주소 (ERC-4337 v0.7)
-const DEFAULT_ENTRY_POINT = '0x4337084D9E255Ff0702461CF8895CE9E3b5Ff108'
+import { getEntryPointAddress } from '@account-abstraction/utils'
+import { getCanonicalEntryPointBytecode } from './canonicalEntryPoint'
 
 const deployPaymaster: DeployFunction = async function (hre: HardhatRuntimeEnvironment) {
   const { deployments, getNamedAccounts } = hre
   const { deploy } = deployments
   const { deployer } = await getNamedAccounts()
 
-  // EntryPoint 주소: 환경변수 또는 기본값 사용
-  const entryPointAddress = process.env.ENTRY_POINT ?? DEFAULT_ENTRY_POINT
+  // EntryPoint 주소: 환경변수 또는 2-deploy-entrypoint와 동일 (canonical bytecode 우선)
+  const canonical = getCanonicalEntryPointBytecode()
+  const entryPointAddress = process.env.ENTRY_POINT ?? getEntryPointAddress(canonical)
 
   // EntryPoint가 배포되어 있는지 확인
   const entryPointCode = await ethers.provider.getCode(entryPointAddress)
