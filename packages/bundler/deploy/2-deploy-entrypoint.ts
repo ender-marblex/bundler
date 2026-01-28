@@ -10,10 +10,10 @@ const deployEP: DeployFunction = async function (hre: HardhatRuntimeEnvironment)
   const epAddr = getEntryPointAddress(canonical)
 
   const net = await ethers.provider.getNetwork()
-  if (net.chainId !== 1337 && net.chainId !== 31337) {
-    console.log('NOT deploying EntryPoint. use pre-deployed entrypoint')
-    process.exit(1)
-  }
+  // if (net.chainId !== 1337 && net.chainId !== 31337) {
+  //   console.log('NOT deploying EntryPoint. use pre-deployed entrypoint')
+  //   process.exit(1)
+  // }
 
   if (await ethers.provider.getCode(epAddr) !== '0x') {
     console.log('EntryPoint already deployed at', epAddr)

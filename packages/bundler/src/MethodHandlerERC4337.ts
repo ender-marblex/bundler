@@ -153,6 +153,7 @@ export class MethodHandlerERC4337 {
       // }
       // }
     )
+    console.log('eth_call args', rpcParams)
     const ret = await provider.send('eth_call', rpcParams)
       .catch((e: any) => { throw new RpcError(decodeRevertReason(e) as string, ValidationErrors.SimulateValidation) })
 
@@ -168,16 +169,18 @@ export class MethodHandlerERC4337 {
 
     const authorizationList = getAuthorizationList(userOp)
     // todo: use simulateHandleOp for this too...
+    const args = [
+      {
+        from: this.entryPoint.address,
+        to: userOp.sender,
+        data: userOp.callData,
+        // @ts-ignore
+        authorizationList: authorizationList.length === 0 ? null : authorizationList
+      }
+    ]
+    console.log('provider.send args', args)
     let callGasLimit = await this.provider.send(
-      'eth_estimateGas', [
-        {
-          from: this.entryPoint.address,
-          to: userOp.sender,
-          data: userOp.callData,
-          // @ts-ignore
-          authorizationList: authorizationList.length === 0 ? null : authorizationList
-        }
-      ]
+      'eth_estimateGas', args
     ).then(b => toNumber(b)).catch(err => {
       const message = err.message.match(/reason="(.*?)"/)?.at(1) ?? 'execution reverted'
       throw new RpcError(message, ValidationErrors.UserOperationReverted)
@@ -200,37 +203,23 @@ export class MethodHandlerERC4337 {
     console.log('\n========== [BUNDLER] UserOperation 수신 시작 ==========')
     console.log('📥 [1/6] RPC 요청 수신 (MethodHandlerERC4337.sendUserOperation)')
     console.log('  - EntryPoint:', entryPointInput)
-    console.log('  - Sender:', userOp.sender)
-    console.log('  - Nonce:', tostr(userOp.nonce))
-    console.log('  - Paymaster:', userOp.paymaster ?? '(없음)')
-    console.log('  - CallData 길이:', userOp.callData?.length ?? 0)
-    console.log('  - Gas Limits:', {
-      preVerificationGas: userOp.preVerificationGas != null ? tostr(userOp.preVerificationGas) : 'N/A',
-      verificationGasLimit: userOp.verificationGasLimit != null ? tostr(userOp.verificationGasLimit) : 'N/A',
-      callGasLimit: userOp.callGasLimit != null ? tostr(userOp.callGasLimit) : 'N/A',
-      paymasterVerificationGasLimit: userOp.paymasterVerificationGasLimit != null ? tostr(userOp.paymasterVerificationGasLimit) : 'N/A',
-      paymasterPostOpGasLimit: userOp.paymasterPostOpGasLimit != null ? tostr(userOp.paymasterPostOpGasLimit) : 'N/A'
-    })
-    console.log('  - Gas Prices:', {
-      maxFeePerGas: userOp.maxFeePerGas != null ? tostr(userOp.maxFeePerGas) : 'N/A',
-      maxPriorityFeePerGas: userOp.maxPriorityFeePerGas != null ? tostr(userOp.maxPriorityFeePerGas) : 'N/A'
-    })
-    
+    console.log('  - userOp:', userOp)
+
     if (!this.config.eip7702Support && userOp.eip7702Auth != null) {
       throw new Error('EIP-7702 tuples are not supported')
     }
     // Remove undefined values from userOp to prevent BigNumber errors
     const cleanedUserOp = this._cleanUserOp(userOp)
     console.log('  ✅ UserOperation 정리 완료 (undefined 값 제거)')
-    
+
     await this._validateParameters(cleanedUserOp, entryPointInput)
     console.log('  ✅ 파라미터 검증 완료')
 
     debug(`UserOperation: Sender=${cleanedUserOp.sender}  Nonce=${tostr(cleanedUserOp.nonce)} EntryPoint=${entryPointInput} Paymaster=${cleanedUserOp.paymaster ?? ''} ${cleanedUserOp.eip7702Auth != null ? 'eip-7702 auth' : ''}`)
-    
+
     console.log('📤 [2/6] ExecutionManager로 전달')
     await this.execManager.sendUserOperation(cleanedUserOp, entryPointInput, false)
-    
+
     const userOpHash = await callGetUserOpHashWithCode(this.entryPoint, cleanedUserOp)
     console.log('  ✅ UserOperation Hash 생성:', userOpHash)
     console.log('========== [BUNDLER] UserOperation 수신 완료 ==========\n')
@@ -247,7 +236,7 @@ export class MethodHandlerERC4337 {
       }
     })
     // Also check for non-enumerable properties that might be needed
-    const requiredFields = ['sender', 'nonce', 'callData', 'verificationGasLimit', 'callGasLimit', 
+    const requiredFields = ['sender', 'nonce', 'callData', 'verificationGasLimit', 'callGasLimit',
                             'preVerificationGas', 'maxFeePerGas', 'maxPriorityFeePerGas', 'signature']
     requiredFields.forEach(key => {
       if ((userOp as any)[key] == null) {
@@ -259,7 +248,13 @@ export class MethodHandlerERC4337 {
 
   async _getUserOperationEvent (userOpHash: string): Promise<UserOperationEventEvent> {
     // TODO: eth_getLogs is throttled. must be acceptable for finding a UserOperation by hash
-    const event = await this.entryPoint.queryFilter(this.entryPoint.filters.UserOperationEvent(userOpHash))
+    const filter = {
+      event: this.entryPoint.filters.UserOperationEvent(userOpHash),
+      fromBlockOrBlockhash: await this.entryPoint.provider.getBlockNumber() - 4000,
+      toBlock: 'latest'
+    }
+
+    const event = await this.entryPoint.queryFilter(filter.event, filter.fromBlockOrBlockhash, filter.toBlock)
     return event[0]
   }
 

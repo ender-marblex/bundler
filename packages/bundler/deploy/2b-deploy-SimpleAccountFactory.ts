@@ -6,10 +6,10 @@ import { getCanonicalEntryPointBytecode } from './canonicalEntryPoint'
 
 const deploySimpleAccountFactory: DeployFunction = async function (hre: HardhatRuntimeEnvironment) {
   const net = await ethers.provider.getNetwork()
-  if (net.chainId !== 1337 && net.chainId !== 31337) {
-    console.log('Skipping SimpleAccountFactory on non-local network')
-    return
-  }
+  // if (net.chainId !== 1337 && net.chainId !== 31337) {
+  //   console.log('Skipping SimpleAccountFactory on non-local network')
+  //   return
+  // }
 
   const canonical = getCanonicalEntryPointBytecode()
   const entryPointAddress = getEntryPointAddress(canonical)

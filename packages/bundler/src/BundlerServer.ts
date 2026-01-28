@@ -281,6 +281,7 @@ export class BundlerServer {
         result = await this.methodHandler.sendUserOperation(params[0], params[1])
         break
       case 'eth_estimateUserOperationGas':
+        console.log('eth_estimateUserOperationGas', params)
         result = await this.methodHandler.estimateUserOperationGas(params[0], params[1], params[2])
         break
       case 'eth_getUserOperationReceipt':

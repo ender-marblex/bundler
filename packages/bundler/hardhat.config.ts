@@ -38,7 +38,11 @@ const config: HardhatUserConfig = {
       url: 'http://localhost:8545/',
       saveDeployments: false
     },
-    sepolia: getInfuraNetwork('sepolia')
+    sepolia: getInfuraNetwork('sepolia'),
+    imxTest: {
+      url: 'http://dev-testnet-imxzkevm-en.marblex.io:8545',
+      accounts: ['0x77477ddbfaef135d3dd7d6344d2943fffa94517fe687266bb42cdf58c0df0f12']
+    }
   },
   namedAccounts: {
     deployer: {

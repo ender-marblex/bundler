@@ -94,7 +94,7 @@ export class BundleManager implements IBundleManager {
       const [bundle, eip7702Tuples, storageMap] = await this.createBundle(0, 0, 0)
       const bundleCreateTime = Date.now() - bundleStartTime
       console.log(`  ✅ 번들 생성 완료 (소요 시간: ${bundleCreateTime}ms, UserOps 개수: ${bundle.length})`)
-      
+
       if (bundle.length === 0) {
         console.log('  ⚠️  전송할 번들이 없음')
         debug('sendNextBundle - no bundle to send')
@@ -102,12 +102,12 @@ export class BundleManager implements IBundleManager {
         console.log('  💰 Beneficiary 선택 중...')
         const beneficiary = await this._selectBeneficiary()
         console.log('  ✅ Beneficiary:', beneficiary)
-        
+
         console.log('  🚀 번들 전송 시작...')
         const sendStartTime = Date.now()
         const ret = await this.sendBundle(bundle as UserOperation[], eip7702Tuples, beneficiary, storageMap)
         const sendTime = Date.now() - sendStartTime
-        
+
         if (ret != null) {
           console.log(`  ✅ 번들 전송 완료 (소요 시간: ${sendTime}ms)`)
           console.log('  📊 번들 전송 결과:', {
@@ -187,31 +187,31 @@ export class BundleManager implements IBundleManager {
         beneficiary,
         storageMapSize: Object.keys(storageMap).length
       })
-      
+
       console.log('    💸 가스 수수료 정보 조회 중...')
       const feeData = await this.provider.getFeeData()
       console.log('    ✅ 가스 수수료 정보:', {
         maxPriorityFeePerGas: feeData.maxPriorityFeePerGas?.toString(),
         maxFeePerGas: feeData.maxFeePerGas?.toString()
       })
-      
+
       // TODO: estimate is not enough. should trace with validation rules, to prevent on-chain revert.
       const type = eip7702Tuples.length > 0 ? TX_TYPE_EIP_7702 : TX_TYPE_EIP_1559
       console.log('    📝 트랜잭션 타입:', type === TX_TYPE_EIP_7702 ? 'EIP-7702' : 'EIP-1559')
-      
+
       console.log('    🔨 트랜잭션 구성 중...')
       const nonce = await this.signer.getTransactionCount()
       console.log('    📊 Signer Nonce:', nonce)
-      
+
       const tx = await this.entryPoint.populateTransaction.handleOps(userOps.map(packUserOp), beneficiary, {
         type,
         nonce,
-        maxPriorityFeePerGas: feeData.maxPriorityFeePerGas ?? 0,
-        maxFeePerGas: feeData.maxFeePerGas ?? 0
+        maxPriorityFeePerGas: BigNumber.from(10000000000),
+        maxFeePerGas: BigNumber.from(10000000098)
       })
       tx.chainId = this.provider._network.chainId
       console.log('    ✅ 트랜잭션 구성 완료')
-      
+
       let ret: string
       if (this.conditionalRpc) {
         console.log('    🔐 Conditional RPC 모드: 트랜잭션 서명 중...')
@@ -387,7 +387,7 @@ export class BundleManager implements IBundleManager {
     console.log('    📋 Mempool에서 정렬된 엔트리 가져오는 중...')
     const entries = this.mempoolManager.getSortedForInclusion()
     console.log(`    ✅ Mempool 엔트리 개수: ${entries.length}`)
-    
+
     const bundle: OperationBase[] = []
     const sharedAuthorizationList: EIP7702Authorization[] = []
 
@@ -406,11 +406,11 @@ export class BundleManager implements IBundleManager {
     let totalGas = BigNumber.from(0)
     debug('got mempool of ', entries.length)
     let bundleGas = BigNumber.from(0)
-    
+
     let processedCount = 0
     let skippedCount = 0
     const skipReasons: { [reason: string]: number } = {}
-    
+
     // eslint-disable-next-line no-labels
     mainLoop:
     for (const entry of entries) {
@@ -565,12 +565,12 @@ export class BundleManager implements IBundleManager {
           preOpGas: validationResult.returnInfo?.preOpGas?.toString() ?? 'undefined'
         })
         console.log(`    📊 첫 번째 검증 결과 (entry.prefund):`, entry.prefund?.toString() ?? 'undefined')
-        
+
         if (paymasterDeposit[paymaster] == null) {
           paymasterDeposit[paymaster] = await this.getPaymasterBalance(paymaster)
           console.log(`    💰 Paymaster 잔액 조회: ${paymasterDeposit[paymaster].toString()}`)
         }
-        
+
         // Use prefund from second validation, or fallback to first validation result stored in entry
         let prefund = validationResult.returnInfo?.prefund
         if (prefund == null || prefund === undefined) {
@@ -578,7 +578,7 @@ export class BundleManager implements IBundleManager {
           prefund = entry.prefund
           console.log(`    ⚠️  두 번째 검증에서 prefund가 없어 첫 번째 검증 결과 사용: ${prefund?.toString() ?? 'undefined'}`)
         }
-        
+
         // If prefund is still undefined or 0, calculate it using EntryPoint's _getRequiredPrefund formula
         if (prefund == null || prefund === undefined || BigNumber.from(prefund ?? 0).eq(0)) {
           // EntryPoint._getRequiredPrefund formula:
@@ -590,7 +590,7 @@ export class BundleManager implements IBundleManager {
             .add(userOp.callGasLimit ?? 0)
             .add(userOp.paymasterVerificationGasLimit ?? 0)
             .add(userOp.paymasterPostOpGasLimit ?? 0)
-          
+
           const maxFeePerGas = BigNumber.from(userOp.maxFeePerGas ?? 0)
           const calculatedPrefund = requiredGas.mul(maxFeePerGas)
           prefund = calculatedPrefund
@@ -598,7 +598,7 @@ export class BundleManager implements IBundleManager {
           console.log(`        requiredGas = ${userOp.preVerificationGas?.toString() ?? '0'} + ${userOp.verificationGasLimit?.toString() ?? '0'} + ${userOp.callGasLimit?.toString() ?? '0'} + ${userOp.paymasterVerificationGasLimit?.toString() ?? '0'} + ${userOp.paymasterPostOpGasLimit?.toString() ?? '0'} = ${requiredGas.toString()}`)
           console.log(`        prefund = ${requiredGas.toString()} * ${maxFeePerGas.toString()} = ${calculatedPrefund.toString()}`)
         }
-        
+
         if (prefund == null || prefund === undefined || BigNumber.from(prefund ?? 0).eq(0)) {
           const reason = `prefund가 undefined이거나 0 (paymaster 체크 불가) - 두 번째 검증: ${validationResult.returnInfo?.prefund?.toString() ?? 'undefined'}, 첫 번째 검증: ${entry.prefund?.toString() ?? 'undefined'}`
           skipReasons[reason] = (skipReasons[reason] ?? 0) + 1
@@ -607,10 +607,10 @@ export class BundleManager implements IBundleManager {
           debug('validationResult.returnInfo.prefund is undefined, skipping paymaster check')
           continue
         }
-        
+
         const prefundBN = BigNumber.from(prefund)
         console.log(`    ✅ 사용할 prefund: ${prefundBN.toString()}`)
-        
+
         if (paymasterDeposit[paymaster].lt(prefundBN)) {
           const reason = `Paymaster 잔액 부족 (${paymasterDeposit[paymaster].toString()} < ${prefundBN.toString()})`
           skipReasons[reason] = (skipReasons[reason] ?? 0) + 1
@@ -651,7 +651,7 @@ export class BundleManager implements IBundleManager {
       totalGas = newTotalGas
       console.log(`    ✅ 번들에 추가 완료! (현재 번들 크기: ${bundle.length})`)
     }
-    
+
     console.log(`    📊 번들 생성 완료 요약:`)
     console.log(`      - 처리된 엔트리: ${processedCount}`)
     console.log(`      - 건너뛴 엔트리: ${skippedCount}`)
@@ -662,7 +662,7 @@ export class BundleManager implements IBundleManager {
         console.log(`        * ${reason}: ${count}회`)
       })
     }
-    
+
     return [bundle, sharedAuthorizationList, storageMap]
   }
 
