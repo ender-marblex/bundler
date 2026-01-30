@@ -38,7 +38,7 @@ export function initServer (config: BundlerConfig, signer: Signer): [ExecutionMa
   const reputationManager = new ReputationManager(getNetworkProvider(config.network), BundlerReputationParams, parseEther(config.minStake), config.minUnstakeDelay)
   const mempoolManager = new MempoolManager(reputationManager)
   const eventsManager = new EventsManager(entryPoint, mempoolManager, reputationManager)
-  const mergedPvgcConfig = Object.assign({}, ChainConfigs[config.chainId] ?? {}, config)
+  const mergedPvgcConfig = Object.assign({}, ChainConfigs[1], ChainConfigs[config.chainId] ?? {}, config)
   const preVerificationGasCalculator = new PreVerificationGasCalculator(mergedPvgcConfig)
   let validationManager: IValidationManager
   let bundleManager: IBundleManager

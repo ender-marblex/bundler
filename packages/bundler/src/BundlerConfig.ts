@@ -34,11 +34,17 @@ export interface BundlerConfig {
 
   eip7702Support: boolean
   // Config overrides for PreVerificationGas calculation
+  transactionGasStipend?: number
   fixedGasOverhead?: number
   perUserOpGasOverhead?: number
+  executeUserOpGasOverhead?: number
   perUserOpWordGasOverhead?: number
-  zeroByteGasCost?: number
-  nonZeroByteGasCost?: number
+  executeUserOpPerWordGasOverhead?: number
+  standardTokenGasCost?: number
+  useEip7623?: boolean
+  floorPerTokenGasCost?: number
+  tokensPerNonzeroByte?: number
+  eip7702AuthGas?: number
   expectedBundleSize?: number
   estimationSignatureSize?: number
   estimationPaymasterDataSize?: number
@@ -74,11 +80,17 @@ export const BundlerConfigShape = {
   eip7702Support: ow.boolean,
 
   // Config overrides for PreVerificationGas calculation
+  transactionGasStipend: ow.optional.number,
   fixedGasOverhead: ow.optional.number,
   perUserOpGasOverhead: ow.optional.number,
+  executeUserOpGasOverhead: ow.optional.number,
   perUserOpWordGasOverhead: ow.optional.number,
-  zeroByteGasCost: ow.optional.number,
-  nonZeroByteGasCost: ow.optional.number,
+  executeUserOpPerWordGasOverhead: ow.optional.number,
+  standardTokenGasCost: ow.optional.number,
+  useEip7623: ow.optional.boolean,
+  floorPerTokenGasCost: ow.optional.number,
+  tokensPerNonzeroByte: ow.optional.number,
+  eip7702AuthGas: ow.optional.number,
   expectedBundleSize: ow.optional.number,
   estimationSignatureSize: ow.optional.number,
   estimationPaymasterDataSize: ow.optional.number
@@ -88,11 +100,17 @@ export const BundlerConfigShape = {
  * Only parameters in this object can be provided by a 'debug_bundler_setConfiguration' API.
  */
 export const DebugBundlerConfigShape = {
+  transactionGasStipend: ow.optional.number,
   fixedGasOverhead: ow.optional.number,
   perUserOpGasOverhead: ow.optional.number,
+  executeUserOpGasOverhead: ow.optional.number,
   perUserOpWordGasOverhead: ow.optional.number,
-  zeroByteGasCost: ow.optional.number,
-  nonZeroByteGasCost: ow.optional.number,
+  executeUserOpPerWordGasOverhead: ow.optional.number,
+  standardTokenGasCost: ow.optional.number,
+  useEip7623: ow.optional.boolean,
+  floorPerTokenGasCost: ow.optional.number,
+  tokensPerNonzeroByte: ow.optional.number,
+  eip7702AuthGas: ow.optional.number,
   expectedBundleSize: ow.optional.number,
   estimationSignatureSize: ow.optional.number,
   estimationPaymasterDataSize: ow.optional.number

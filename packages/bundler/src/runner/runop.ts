@@ -5,8 +5,10 @@
  * for a simple target method, we just call the "nonce" method of the account itself.
  */
 
-import { BigNumber, Signer, Wallet } from 'ethers'
+import path from 'path'
+import { BigNumber, ContractFactory, Signer, Wallet } from 'ethers'
 import { JsonRpcProvider } from '@ethersproject/providers'
+import { arrayify } from 'ethers/lib/utils'
 import { formatEther, keccak256, parseEther } from 'ethers/lib/utils'
 import { Command } from 'commander'
 import { DeterministicDeployer, erc4337RuntimeVersion, SimpleAccountFactory__factory } from '@account-abstraction/utils'
@@ -15,6 +17,14 @@ import { HttpRpcClient, SimpleAccountAPI, SimplePaymasterAPI } from '@account-ab
 import { runBundler } from '../runBundler'
 import { BundlerServer } from '../BundlerServer'
 import { getNetworkProvider } from '../Config'
+import {
+  callGetUserOpHashWithCode,
+  EIP_7702_MARKER_INIT_CODE,
+  IEntryPoint__factory,
+  UserOperation
+} from '@account-abstraction/utils'
+import { signEip7702Authorization } from './eip7702helpers'
+import { ecsign, toRpcSig } from 'ethereumjs-util'
 
 const ENTRY_POINT = '0x4337084D9E255Ff0702461CF8895CE9E3b5Ff108'
 
@@ -55,7 +65,10 @@ class Runner {
         process.exit(1)
       }
       const dep1 = new DeterministicDeployer(deploymentSigner.provider as any, deploymentSigner)
-      await dep1.deterministicDeploy(new SimpleAccountFactory__factory(), 0, [this.entryPointAddress])
+      // CREATE2 proxy 배포 후, Factory 배포 시 estimateGas가 revert하는 경우가 있어 gasLimit 명시
+      const deployTx = await dep1.getDeployTransaction(new SimpleAccountFactory__factory(), 0, [this.entryPointAddress])
+      ;(deployTx as any).gasLimit = 3_000_000
+      await deploymentSigner.sendTransaction(deployTx)
     }
     this.bundlerProvider = new HttpRpcClient(this.bundlerUrl, this.entryPointAddress, chainId)
     
@@ -95,19 +108,34 @@ class Runner {
     try {
       console.log('userOp', userOp)
       const userOpHash = await this.bundlerProvider.sendUserOpToBundler(userOp)
+      console.log('✅ UserOp submitted:', userOpHash)
+      
       if (waitForReceipt) {
-        // Wait for receipt with timeout
-        let receipt: string | null = null
-        let attempts = 0
-        while (receipt == null && attempts < 60) {
-          await new Promise(resolve => setTimeout(resolve, 1000))
-          receipt = await this.accountApi.getUserOpReceipt(userOpHash).catch(() => null)
-          attempts++
+        // Wait for receipt with 10 second timeout
+        const startTime = Date.now()
+        const timeout = 10000 // 10 seconds
+        let txHash: string | null = null
+        
+        while (txHash == null && (Date.now() - startTime) < timeout) {
+          await new Promise(resolve => setTimeout(resolve, 500))
+          try {
+            const receipt = await this.accountApi.getUserOpReceipt(userOpHash)
+            if (receipt) {
+              txHash = receipt
+              break
+            }
+          } catch (e) {
+            // Continue waiting
+          }
         }
-        console.log('reqId', userOpHash, 'txid=', receipt)
-        return receipt
+        
+        if (txHash) {
+          console.log('✅ Success! TxHash:', txHash)
+        } else {
+          console.log('⏱️ Timeout')
+        }
+        return txHash
       } else {
-        console.log('reqId', userOpHash, 'txid= (not waiting)')
         return null
       }
     } catch (e: any) {
@@ -128,6 +156,7 @@ async function main (): Promise<void> {
     .option('--show-stack-traces', 'Show stack traces.')
     .option('--selfBundler', 'run bundler in-process (for debugging the bundler)')
     .option('--paymaster <address>', 'paymaster contract address for gasless transactions')
+    .option('--eip7702', 'Use EIP-7702 mode (delegate account)')
 
   const opts = program.parse().opts()
   const provider = getNetworkProvider(opts.network)
@@ -183,6 +212,15 @@ async function main (): Promise<void> {
   if (paymasterAddress != null) {
     console.log('using paymaster address=', paymasterAddress)
   }
+
+  // EIP-7702 모드 처리
+  if (opts.eip7702) {
+    console.log('🚀 EIP-7702 모드로 실행합니다')
+    await runEip7702Test(provider, signer, opts.bundlerUrl, opts.entryPoint, accountOwner, paymasterAddress)
+    await bundler?.stop()
+    return
+  }
+
   const client = await new Runner(provider, opts.bundlerUrl, accountOwner, opts.entryPoint, index).init(deployFactory ? signer : undefined, paymasterAddress)
 
   const addr = await client.getAddress()
@@ -222,6 +260,128 @@ async function main (): Promise<void> {
   const txid2 = await client.runUserOp(dest, data, true)
   console.log('after run2, txid2=', txid2)
   await bundler?.stop()
+}
+
+async function runEip7702Test (
+  provider: JsonRpcProvider,
+  signer: Signer,
+  bundlerUrl: string,
+  entryPointAddress: string,
+  accountOwner: Wallet,
+  _paymasterAddress?: string
+): Promise<void> {
+  console.log('\n========== EIP-7702 테스트 시작 ==========')
+  
+  // 1. Simple7702Account delegate 배포 (JSON 아티팩트 사용, Hardhat 미의존)
+  console.log('📦 Simple7702Account delegate 배포 중...')
+  const artifactPath = path.join(__dirname, '../../../../submodules/account-abstraction/artifacts/contracts/accounts/Simple7702Account.sol/Simple7702Account.json')
+  const artifact = require(artifactPath)
+  const delegateFactory = new ContractFactory(artifact.abi, artifact.bytecode, signer)
+  const delegate = await delegateFactory.deploy()
+  await delegate.deployed()
+  const delegateAddress = delegate.address
+  console.log('✅ Delegate 배포 완료:', delegateAddress)
+
+  // 2. EntryPoint 연결 (utils에서 제공)
+  const entryPoint = IEntryPoint__factory.connect(entryPointAddress, provider)
+  const chainId = (await provider.getNetwork()).chainId
+
+  // 3. EOA (accountOwner)
+  const eoa = accountOwner.connect(provider) as Wallet
+  const eoaAddress = await eoa.getAddress()
+  console.log('👤 EOA 주소:', eoaAddress)
+
+  // 4. EOA에 ETH 전송 (필요한 경우)
+  const eoaBalance = await provider.getBalance(eoaAddress)
+  if (eoaBalance.lt(parseEther('0.1'))) {
+    console.log('💰 EOA에 ETH 전송 중...')
+    await signer.sendTransaction({
+      to: eoaAddress,
+      value: parseEther('1')
+    }).then(async tx => await tx.wait())
+    console.log('✅ ETH 전송 완료')
+  }
+
+  // 5. EIP-7702 authorization 생성
+  console.log('🔐 EIP-7702 authorization 생성 중...')
+  const auth = await signEip7702Authorization(eoa, {
+    chainId,
+    nonce: 0,
+    address: delegateAddress
+  })
+  const authWithNonce = { ...auth, nonce: auth.nonce ?? 0 }
+  console.log('✅ Authorization 생성 완료')
+
+  // 6. UserOperation 구성 (factory = 0x7702 마커, 가스는 기본값)
+  console.log('📝 UserOperation 생성 중...')
+  const callData = delegate.interface.encodeFunctionData('execute', [eoaAddress, 0, '0x'])
+  const feeData = await provider.getFeeData()
+  const maxPriorityFeePerGas = feeData.maxPriorityFeePerGas ?? BigNumber.from(1e9)
+  const maxFeePerGas = feeData.maxFeePerGas?.add(maxPriorityFeePerGas) ?? maxPriorityFeePerGas.mul(2)
+  const partialUserOp: UserOperation = {
+    sender: eoaAddress,
+    nonce: 0,
+    factory: EIP_7702_MARKER_INIT_CODE,
+    factoryData: '0x',
+    callData,
+    callGasLimit: 100000,
+    verificationGasLimit: 200000,
+    preVerificationGas: 50000,
+    maxFeePerGas,
+    maxPriorityFeePerGas,
+    signature: '0x'
+  }
+  const userOpWithAuth: UserOperation = {
+    ...partialUserOp,
+    eip7702Auth: authWithNonce
+  }
+
+  // 7. getUserOpHash (7702 state override 적용) 후 서명
+  const userOpHashHex = await callGetUserOpHashWithCode(entryPoint, userOpWithAuth)
+  const sig = ecsign(Buffer.from(arrayify(userOpHashHex)), Buffer.from(arrayify(eoa.privateKey)))
+  const signature = toRpcSig(sig.v, sig.r, sig.s)
+  const finalUserOp: UserOperation = { ...userOpWithAuth, signature }
+
+  console.log('✅ UserOperation 생성 완료')
+  console.log('  - Sender:', finalUserOp.sender)
+  console.log('  - Factory (7702):', finalUserOp.factory)
+  console.log('  - CallData:', finalUserOp.callData)
+
+  // 8. Bundler에 UserOperation 전송
+  console.log('📤 Bundler에 UserOperation 전송 중...')
+  const bundlerProvider = new HttpRpcClient(bundlerUrl, entryPointAddress, chainId)
+  
+  try {
+    const userOpHash = await bundlerProvider.sendUserOpToBundler(finalUserOp)
+    console.log('✅ UserOperation 전송 완료, Hash:', userOpHash)
+
+    // 9. Receipt 대기
+    console.log('⏳ Receipt 대기 중...')
+    let receipt: string | null = null
+    let attempts = 0
+    while (receipt == null && attempts < 60) {
+      await new Promise(resolve => setTimeout(resolve, 1000))
+      const accountApi = new SimpleAccountAPI({
+        provider,
+        entryPointAddress,
+        owner: eoa,
+        factoryAddress: '0x' // 7702 모드에서는 사용하지 않음
+      })
+      receipt = await accountApi.getUserOpReceipt(userOpHash).catch(() => null)
+      attempts++
+    }
+
+    if (receipt != null) {
+      console.log('✅ 트랜잭션 완료, Receipt:', receipt)
+    } else {
+      console.log('⚠️ Receipt를 받지 못했습니다 (타임아웃)')
+    }
+  } catch (e: any) {
+    console.error('❌ UserOperation 전송 실패:', e.message)
+    throw e
+  }
+
+  console.log('========== EIP-7702 테스트 완료 ==========\n')
 }
 
 void main()

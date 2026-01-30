@@ -137,6 +137,7 @@ export class MethodHandlerERC4337 {
       maxPriorityFeePerGas: 0,
       preVerificationGas: 0,
       verificationGasLimit: 10e6,
+      callGasLimit: 10e6,
       ...userOp1
     } as any
     // todo: checks the existence of parameters, but since we hexlify the inputs, it fails to validate
